@@ -3,7 +3,7 @@
 // press the button it will change to a new pixel animation.  Note that you need to press the
 // button once to start the first animation!
 
-#include "NeoMaple.h"
+#include <NeoMaple.h>
 
 #define BUTTON_PIN   32    // Digital IO pin connected to the button.  This will be
                           // driven with a pull-up resistor so the switch should
@@ -11,7 +11,7 @@
                           // transition the button press logic will execute.
 
 
-#define PIXEL_COUNT 19
+#define PIXEL_COUNT 12
 
 // Parameter 1 = number of pixels in strip,  neopixel stick has 8
 // Parameter 2 = pin number (most are valid)
