@@ -28,7 +28,7 @@
  * to append to the data frame for the LEDs to 
  * load the received data into their registers */
 #define WS2812_DEADPERIOD 19
-
+#define LED_PIN 33
 uint16_t WS2812_IO_High = 0xFFFF;
 uint16_t WS2812_IO_Low = 0x0000;
 
@@ -37,7 +37,7 @@ volatile uint8_t TIM2_overflows = 0;
 
 /* WS2812 framebuffer
  * buffersize = (#LEDs / 16) * 24 */
-uint16_t WS2812_IO_framedata[48];
+uint16_t WS2812_IO_framedata[19 * 24];
 
 /* Array defining 12 color triplets to be displayed */
 uint8_t colors[12][3] = 
@@ -58,17 +58,10 @@ uint8_t colors[12][3] =
 
 void GPIO_init(void)
 {
-  // GPIO_InitTypeDef GPIO_InitStructure;
-  // // GPIOA Periph clock enable
-  // RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOA, ENABLE);
-  // // GPIOA pins WS2812 data outputs
-  // GPIO_InitStructure.GPIO_Pin = 0xFFFF;
-  // GPIO_InitStructure.GPIO_Mode = GPIO_Mode_Out_PP;
-  // GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
-  // GPIO_Init(GPIOA, &GPIO_InitStructure);
-
-  gpio_set_mode(GPIOA, 11, GPIO_OUTPUT_PP);
+  // GPIOA Periph clock enable
   rcc_clk_enable(RCC_GPIOA);
+  // GPIOA pins WS2812 data outputs
+  gpio_set_mode(GPIOA, 0, GPIO_OUTPUT_PP);
 
 }
 
@@ -84,52 +77,47 @@ void TIM2_init() {
   /* Timing Mode configuration: Channel 1 */
   timer_set_mode(TIMER2, 1, TIMER_OUTPUT_COMPARE);
   timer_set_compare(TIMER2, 1, 8);
-  timer_oc_set_mode(TIMER2, 1, TIMER_OC_MODE_FROZEN, TIMER_OC_CE | TIMER_OC_FE);
+  timer_oc_set_mode(TIMER2, 1, TIMER_OC_MODE_FROZEN, ~TIMER_OC_PE);
 
-  //TIM_ARRPreloadConfig(TIM2, DISABLE);
   /* Timing Mode configuration: Channel 2 */
   timer_set_mode(TIMER2, 2, TIMER_OUTPUT_COMPARE);
   timer_set_compare(TIMER2, 2, 17);
-  //TIM_OCInitStructure.TIM_OutputState = TIM_OutputState_Disable;
-  timer_oc_set_mode(TIMER2, 2, TIMER_OC_MODE_PWM_1, TIMER_OC_CE | TIMER_OC_FE);
+  timer_oc_set_mode(TIMER2, 2, TIMER_OC_MODE_PWM_1, ~TIMER_OC_PE);
   //timer_resume(TIMER2);
 
-  
+
+  timer_attach_interrupt(TIMER2, TIMER_UPDATE_INTERRUPT, TIM2_IRQHandler);
   /* configure TIM2 interrupt */
   nvic_irq_set_priority(NVIC_TIMER2, 2);
   nvic_irq_enable(NVIC_TIMER2);
 }
 
-void DMA_init(void)
-{
-  // DMA_InitTypeDef DMA_InitStructure;
-  // NVIC_InitTypeDef NVIC_InitStructure;
-  
-  // RCC_AHBPeriphClockCmd(RCC_AHBPeriph_DMA1, ENABLE);
-  
+void DMA_init(void) {
+  dma_init(DMA1);
   // TIM2 Update event
   /* DMA1 Channel2 configuration ----------------------------------------------*/
   dma_setup_transfer(DMA1, DMA_CH2, (volatile void*) &(GPIOA->regs->ODR), DMA_SIZE_32BITS, 
-                                    (volatile void*) &(WS2812_IO_High), DMA_SIZE_16BITS, 0);
+                                    (volatile void*) &(WS2812_IO_High), DMA_SIZE_16BITS, DMA_FROM_MEM);
   dma_set_priority(DMA1, DMA_CH2, DMA_PRIORITY_HIGH);
 
   // TIM2 CC1 event
   /* DMA1 Channel5 configuration ----------------------------------------------*/
   dma_setup_transfer(DMA1, DMA_CH5, (volatile void*) &(GPIOA->regs->ODR), DMA_SIZE_32BITS, 
-                                    (volatile void*) &(WS2812_IO_framedata), DMA_SIZE_16BITS, 0);
+                                    (volatile void*) &(WS2812_IO_framedata), DMA_SIZE_16BITS, DMA_FROM_MEM | DMA_MINC_MODE);
   dma_set_priority(DMA1, DMA_CH5, DMA_PRIORITY_HIGH);
 
   
   // TIM2 CC2 event
   /* DMA1 Channel7 configuration ----------------------------------------------*/
   dma_setup_transfer(DMA1, DMA_CH7, (volatile void*) &(GPIOA->regs->ODR), DMA_SIZE_32BITS, 
-                                    (volatile void*) &(WS2812_IO_Low), DMA_SIZE_16BITS, DMA_TRNS_CMPLT);
+                                    (volatile void*) &(WS2812_IO_Low), DMA_SIZE_16BITS, DMA_FROM_MEM | DMA_TRNS_CMPLT);
   dma_set_priority(DMA1, DMA_CH7, DMA_PRIORITY_HIGH);
 
 
   /* configure DMA1 Channel7 interrupt */
   nvic_irq_set_priority(NVIC_DMA_CH7, 1);
   nvic_irq_enable(NVIC_DMA_CH7);
+  dma_attach_interrupt(DMA1, DMA_CH7, DMA1_Channel7_IRQHandler);
   /* enable DMA1 Channel7 transfer complete interrupt */
 }
 
@@ -157,11 +145,10 @@ void WS2812_sendbuf(uint32_t buffersize)
   dma_enable(DMA1, DMA_CH2);
   dma_enable(DMA1, DMA_CH5);
   dma_enable(DMA1, DMA_CH7);
-  dma_attach_interrupt(DMA1, DMA_CH7, DMA1_Channel7_IRQHandler);
   // IMPORTANT: enable the TIM2 DMA requests AFTER enabling the DMA channels!
-  timer_dma_enable_req(TIMER2, 0); /* TIM_DMA_Update */
   timer_dma_enable_req(TIMER2, 1);
   timer_dma_enable_req(TIMER2, 2);
+  timer_dma_enable_req(TIMER2, 0); /* TIM_DMA_Update */
   
   // preload counter with 29 so TIM2 generates UEV directly to start DMA transfer
   timer_set_count(TIMER2, 29);
@@ -177,15 +164,14 @@ void DMA1_Channel7_IRQHandler(void)
   dma_clear_isr_bits(DMA1, DMA_CH7); 
   // enable TIM2 Update interrupt to append 50us dead period
   timer_enable_irq(TIMER2, TIMER_UPDATE_INTERRUPT);
-  timer_attach_interrupt(TIMER2, TIMER_UPDATE_INTERRUPT, TIM2_IRQHandler);
   // disable the DMA channels
   dma_disable(DMA1, DMA_CH2);
   dma_disable(DMA1, DMA_CH5);
   dma_disable(DMA1, DMA_CH7);
   // IMPORTANT: disable the DMA requests, too!
-  timer_dma_disable_req(TIMER2, 0); /* TIM_DMA_Update */
   timer_dma_disable_req(TIMER2, 1);
   timer_dma_disable_req(TIMER2, 2);  
+  timer_dma_disable_req(TIMER2, 0); /* TIM_DMA_Update */
 }
 
 /* TIM2 Interrupt Handler gets executed on every TIM2 Update if enabled */
@@ -228,13 +214,10 @@ void WS2812_framedata_setPixel(uint8_t row, uint16_t column, uint8_t red, uint8_
   for (i = 0; i < 8; i++)
   {
     // clear the data for pixel 
-    WS2812_IO_framedata[((column*24)+i)] &= ~(0x01<<row);
-    WS2812_IO_framedata[((column*24)+8+i)] &= ~(0x01<<row);
-    WS2812_IO_framedata[((column*24)+16+i)] &= ~(0x01<<row);
     // write new data for pixel
-    WS2812_IO_framedata[((column*24)+i)] |= ((((green<<i) & 0x80)>>7)<<row);
-    WS2812_IO_framedata[((column*24)+8+i)] |= ((((red<<i) & 0x80)>>7)<<row);
-    WS2812_IO_framedata[((column*24)+16+i)] |= ((((blue<<i) & 0x80)>>7)<<row);
+    WS2812_IO_framedata[((column*24)+i)] = ((((green<<i) & 0x80)>>7));
+    WS2812_IO_framedata[((column*24)+8+i)] = ((((red<<i) & 0x80)>>7));
+    WS2812_IO_framedata[((column*24)+16+i)] = ((((blue<<i) & 0x80)>>7));
   }
 }
 
@@ -274,28 +257,32 @@ void setup() {
   GPIO_init();
   DMA_init();
   TIM2_init();
+  memset(WS2812_IO_framedata, 0, sizeof(WS2812_IO_framedata));
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, HIGH);
 }
 
 void loop() {
   uint8_t i;
-  while (1){
-    // set two pixels (columns) in the defined row (channel 0) to the
-    // color values defined in the colors array
-    for (i = 0; i < 12; i++)
-    {
-      // wait until the last frame was transmitted
-      while(!WS2812_TC);
-      // this approach sets each pixel individually
-      WS2812_framedata_setPixel(0, 0, colors[i][0], colors[i][1], colors[i][2]);
-      WS2812_framedata_setPixel(0, 1, colors[i][0], colors[i][1], colors[i][2]);
-      // this funtion is a wrapper and achieved the same thing, tidies up the code
-      //WS2812_framedata_setRow(0, 2, colors[i][0], colors[i][1], colors[i][2]);
-      // send the framebuffer out to the LEDs
-      WS2812_sendbuf(48);
-      // wait some amount of time
-      delay(500000);
+  // set two pixels (columns) in the defined row (channel 0) to the
+  // color values defined in the colors array
+  for (i = 0; i < 12; i++)
+  {
+    Serial.println(i);
+    // wait until the last frame was transmitted
+    while(!WS2812_TC);
+    // this approach sets each pixel individually
+    for (int j = 0; j < 19; j++){
+      WS2812_framedata_setPixel(0, j, colors[i][0], colors[i][1], colors[i][2]);
     }
-  }
+    // this funtion is a wrapper and achieved the same thing, tidies up the code
+    //WS2812_framedata_setRow(0, 6, colors[i][0], colors[i][1], colors[i][2]);
+    // send the framebuffer out to the LEDs
+    WS2812_sendbuf(19*24);
+    // wait some amount of time
+    delay(500);
+    }
 }
+
 
 
