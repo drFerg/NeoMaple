@@ -1,4 +1,5 @@
-#NeoMaple
+NeoMaple
+========
 A Neopixel (WS2811/12) library for the maple microcontroller family running STM32Duino (Arduino for STM32 devices). This library is a port of Elia Ritterbusch's work and the Adafruit Neopixel library.
 
 The library supports controlling WS2812 based LED chips and the awesome Adafruit NeoPixel strips and rings.
